@@ -4,6 +4,8 @@ from typing import Optional
 import torch
 from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
 from vllm_fl.dispatch import CachedOp
+from vllm.platforms import current_platform
+from . import rotary_embedding_dispatch  # noqa: F401
 
 _rotary_embedding = CachedOp("rotary_embedding")
 
@@ -22,6 +24,33 @@ class RotaryEmbeddingFL(RotaryEmbedding):
             head_size, rotary_dim, max_position_embeddings, base,
             is_neox_style, dtype
         )
+
+    def forward_native(
+        self,
+        positions: torch.Tensor,
+        query: torch.Tensor,
+        key: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        # Inductor defaults to the native path even when an OOT class is
+        # registered. Keep other devices, dtypes and partial RoPE unchanged.
+        if (getattr(current_platform, "vendor_name", None) != "iluvatar"
+                or query.device.type != "cuda"
+                or key is None
+                or self.rotary_dim != self.head_size
+                or self.head_size != 128
+                or query.dtype not in (torch.float16, torch.bfloat16)):
+            return super().forward_native(positions, query, key)
+
+        cache = self._match_cos_sin_cache_dtype(query)
+        positions = positions.flatten()
+        n = positions.shape[0]
+        q = query.view(n, -1, self.head_size)
+        k = key.view(n, -1, self.head_size)
+        cos, sin = cache.chunk(2, dim=-1)
+        q_out, k_out = torch.ops.vllm.fl_rotary_embedding_dispatch(
+            q, k, cos, sin, positions, not self.is_neox_style
+        )
+        return q_out.reshape(query.shape), k_out.reshape(key.shape)
 
     def forward_oot(
         self,
