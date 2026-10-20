@@ -173,6 +173,10 @@ def register_model():
 
     _register_gdn_packed_decode_patch()
 
+    from vllm_fl.compilation.rope_kv_fusion import install_rope_kv_fusion
+    install_rope_kv_fusion()
+
+
     # Register GLM-5 (GlmMoeDsa) — config not yet upstream
     try:
         from vllm.transformers_utils.config import _CONFIG_REGISTRY
