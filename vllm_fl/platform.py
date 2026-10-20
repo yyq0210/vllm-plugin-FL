@@ -179,6 +179,10 @@ class PlatformFL(Platform):
 
         parallel_config.worker_cls = "vllm_fl.worker.worker.WorkerFL"
 
+        from vllm_fl.worker.kv_reservation_config import configure_kv_reservation
+        if configure_kv_reservation(vllm_config, cls.vendor_name):
+            logger.info("Selecting LeanScale async scheduler with KV growth admission.")
+
         cache_config = vllm_config.cache_config
         if cache_config and cache_config.block_size is None:
             # Ascend NPU requires block_size to be a multiple of 128
