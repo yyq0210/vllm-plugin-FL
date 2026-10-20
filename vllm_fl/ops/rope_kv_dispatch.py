@@ -10,7 +10,7 @@ from vllm.utils.torch_utils import (
 )
 from vllm_fl.dispatch import CachedOp, get_default_manager, is_dump_enabled
 
-logger = init_logger(__name__)
+logger = init_logger("vllm.leanscale.rope_kv_dispatch")
 _rope = CachedOp("rotary_embedding")
 
 

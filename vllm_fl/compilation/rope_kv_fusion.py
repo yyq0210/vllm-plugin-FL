@@ -9,7 +9,7 @@ from vllm.logger import init_logger
 
 from vllm_fl.ops import rope_kv_dispatch  # noqa: F401
 
-logger = init_logger(__name__)
+logger = init_logger("vllm.leanscale.rope_kv_fusion")
 
 
 def _op(node, name):
@@ -33,6 +33,7 @@ def _origin(node):
 
 def fuse_rope_kv(graph_module):
     graph = graph_module.graph
+    attention_nodes = [n for n in graph.nodes if _op(n, "unified_attention_with_output")]
     count = 0
     for update in list(graph.nodes):
         if not _op(update, "unified_kv_cache_update") or len(update.args) != 3:
@@ -105,7 +106,12 @@ def fuse_rope_kv(graph_module):
         graph.erase_node(rope)
         count += 1
     if count:
-        graph.eliminate_dead_code()
+        # This is Dynamo's pre-functionalization graph. OpOverloadPacket nodes
+        # that mutate output buffers can look pure to FX's generic DCE; running
+        # it here can delete the attention writes and then their entire inputs.
+        # Only erase the explicitly matched RoPE/KV nodes above. Let vLLM's
+        # normal functionalization and later compiler passes handle dead views.
+        assert all(n in graph.nodes for n in attention_nodes)
         graph.lint()
         graph_module.recompile()
         logger.info("LeanScale RoPE+KV graph fusion: replaced=%d", count)
