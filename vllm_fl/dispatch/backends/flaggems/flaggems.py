@@ -184,6 +184,16 @@ class FlagGemsBackend(Backend):
             print("Using FlagGems attention backend.")
             return "vllm_fl.dispatch.backends.flaggems.impl.attention.AttentionFLBackend"
 
+        from vllm.platforms import current_platform
+        if getattr(current_platform, "vendor_name", None) == "iluvatar":
+            # The existing attention_backend dispatcher selected FlagOS.
+            # Keep Triton metadata, KV layout/update, graph support and fallback;
+            # replace only the bounded paged GQA computation.
+            return (
+                "vllm_fl.dispatch.backends.flaggems.impl.iluvatar_gqa."
+                "IluvatarGQABackend"
+            )
+
         return AttentionBackendEnum.TRITON_ATTN.get_path()
 
     def moe_align_block_size(
