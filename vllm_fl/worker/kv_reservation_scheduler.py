@@ -168,16 +168,16 @@ class KVReservationAsyncScheduler(AsyncScheduler):
         logger.info("LeanScale KV growth admission enabled=%s policy=full_max_tokens",
                     enabled)
 
-    def schedule(self):
+    def schedule(self, throttle_prefills: bool = False):
         controller = self._kv_admission
         if controller is None:
-            return super().schedule()
+            return super().schedule(throttle_prefills)
         # Keep the public manager unchanged outside this synchronous scheduling
         # call. The original AsyncScheduler still owns all token accounting.
         original = self.kv_cache_manager
         self.kv_cache_manager = controller
         try:
-            output = super().schedule()
+            output = super().schedule(throttle_prefills)
         finally:
             self.kv_cache_manager = original
         controller.stats["peak_running"] = max(

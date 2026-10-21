@@ -313,6 +313,45 @@ def test_varied_request_lifetimes_never_preempt_running():
         assert c.stats["deferred"] > 0
 
 
+def test_engine_core_throttle_prefills_contract():
+    """EngineCore passes a positional bool; preserve parent semantics on all paths."""
+    import inspect
+    parent = inspect.signature(AsyncScheduler.schedule)
+    assert "throttle_prefills" in parent.parameters
+    assert parent.parameters["throttle_prefills"].default is False
+    for enabled in (False, True):
+        for keyword in (False, True):
+            for throttle in (False, True):
+                m, sched, controller, cfg = setup(81)
+                obj = object.__new__(KVReservationAsyncScheduler)
+                obj.kv_cache_manager = m
+                obj._kv_admission = controller if enabled else None
+                obj._kv_admission_last_log = time.monotonic()
+                obj.running = []
+                sentinel = object()
+                observed = []
+                def parent_call(instance, throttle_prefills=False):
+                    assert instance.kv_cache_manager is (controller if enabled else m)
+                    observed.append(throttle_prefills)
+                    return sentinel
+                with patch.object(AsyncScheduler, "schedule", parent_call):
+                    actual = (obj.schedule(throttle_prefills=throttle) if keyword
+                              else obj.schedule(throttle))
+                assert actual is sentinel and observed == [throttle]
+                assert obj.kv_cache_manager is m
+                def failure(instance, throttle_prefills=False):
+                    assert throttle_prefills is throttle
+                    raise RuntimeError("expected contract probe")
+                with patch.object(AsyncScheduler, "schedule", failure):
+                    try:
+                        obj.schedule(throttle_prefills=throttle)
+                    except RuntimeError as exc:
+                        assert str(exc) == "expected contract probe"
+                    else:
+                        raise AssertionError("exception must propagate")
+                assert obj.kv_cache_manager is m
+
+
 def main():
     result = {"status": "running", "checks": [], "cuda_initialized": False}
     for name, fn in sorted(globals().copy().items()):
