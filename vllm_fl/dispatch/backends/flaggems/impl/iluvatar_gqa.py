@@ -64,7 +64,7 @@ class IluvatarGQAImpl(TritonAttentionImpl):
         from flag_gems.runtime.backend._iluvatar.fused.paged_gqa import paged_gqa
 
         if not getattr(self, "_leanscale_gqa_logged", False):
-            logger.info("LeanScale GQA active: Q16/KV2/D128, segmented decode and mixed batch; decode_warps=4 decode_stages=1 segments=16 decode_layout=1 decode_rows=8; layer=%s",
+            logger.info("LeanScale GQA active: Q16/KV2/D128, segmented decode and mixed batch; decode_warps=4 decode_stages=1 segments=16 decode_layout=1 decode_rows=8 prefill_rows=64 prefill_warps=4 prefill_stages=1 prefill_tile=32; layer=%s",
                         getattr(layer, "layer_name", "unknown"))
             self._leanscale_gqa_logged = True
         meta = attn_metadata
@@ -75,5 +75,6 @@ class IluvatarGQAImpl(TritonAttentionImpl):
                   meta.max_query_len, meta.softmax_segm_output,
                   meta.softmax_segm_max, meta.softmax_segm_expsum,
                   segments=16, decode_warps=4, decode_stages=1,
-                  decode_layout=1, decode_rows=8)
+                  decode_layout=1, decode_rows=8,
+                  prefill_rows=64, prefill_warps=4, prefill_stages=1, prefill_tile=32)
         return output
