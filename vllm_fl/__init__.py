@@ -97,6 +97,9 @@ def _patch_custom_ops():
 
 def register():
     """Register the FL platform."""
+    from vllm_fl.patches.topp_row_parallel import register_topp_row_parallel_env
+    register_topp_row_parallel_env()
+
     _patch_custom_ops()
     _patch_flash_attn_import()
     _patch_transformers_compat()
@@ -175,6 +178,9 @@ def register_model():
 
     from vllm_fl.compilation.rope_kv_fusion import install_rope_kv_fusion
     install_rope_kv_fusion()
+
+    from vllm_fl.patches.topp_row_parallel import install_topp_row_parallel
+    install_topp_row_parallel()
 
 
     # Register GLM-5 (GlmMoeDsa) — config not yet upstream
