@@ -14,16 +14,42 @@ from vllm.logger import init_logger
 
 ENV_NAME = 'VLLM_FL_TOPP_ROW_PARALLEL'
 SHADOW_ENV = 'VLLM_FL_TOPP_ROW_PARALLEL_SHADOW'
+SHADOW_ARM_ENV = 'VLLM_FL_TOPP_ROW_PARALLEL_SHADOW_ARM_FILE'
 EXPECTED_SOURCE_SHA256 = '64c66699cd398c2eafe9eb91f0e189162f83a6f83a209651048e163d7d6fcee8'
 logger = init_logger('vllm.leanscale.topp_row_parallel')
 _stats = {'candidate_calls': 0, 'shadow_checks': 0}
 _logged_batches = set()
 
 
+class _ShadowBudget:
+    """Per-batch diagnostic quota, armed only after service warmup."""
+    def __init__(self, arm_file):
+        if not arm_file or not Path(arm_file).is_absolute():
+            raise ValueError('Shadow diagnostics require an absolute arm file path')
+        self.arm_file = Path(arm_file)
+        if self.arm_file.exists():
+            raise ValueError('Shadow arm file must not exist before service startup')
+        self.armed = False
+        self.passed = {}
+
+    def should_check(self, batch):
+        if not 17 <= batch <= 64:
+            return False
+        if not self.armed:
+            self.armed = self.arm_file.is_file()
+        return self.armed and self.passed.get(batch, 0) < 2
+
+    def record_pass(self, batch):
+        if not self.armed or not 17 <= batch <= 64 or self.passed.get(batch, 0) >= 2:
+            raise RuntimeError('Invalid shadow budget update')
+        self.passed[batch] = self.passed.get(batch, 0) + 1
+
+
 def register_topp_row_parallel_env():
     from vllm import envs
     for key in (ENV_NAME, SHADOW_ENV):
         envs.environment_variables.setdefault(key, lambda name=key: os.environ.get(name, '0') == '1')
+    envs.environment_variables.setdefault(SHADOW_ARM_ENV, lambda: os.environ.get(SHADOW_ARM_ENV, ''))
 
 
 @functools.lru_cache(maxsize=8)
@@ -63,6 +89,7 @@ def install_topp_row_parallel():
         logger.warning('LeanScale top-p row parallel disabled: unverified implementation or alias')
         return False
     shadow = os.environ.get(SHADOW_ENV, '0') == '1'
+    shadow_budget = _ShadowBudget(os.environ.get(SHADOW_ARM_ENV)) if shadow else None
 
     @functools.wraps(original)
     def apply(logits, k, p, mask_value=-float('inf')):
@@ -88,7 +115,7 @@ def install_topp_row_parallel():
                       logits.new_tensor(base._PERCENTILE_TO_STD_TABLE))
             base._TRITON_TABLE_CACHE[logits.device] = tables
         normal, percentile = tables
-        do_shadow = shadow and _stats['shadow_checks'] < 32
+        do_shadow = shadow_budget is not None and shadow_budget.should_check(batch)
         reference = logits.clone() if do_shadow else None
         rng_before = torch.cuda.get_rng_state(logits.device) if do_shadow else None
         base._topk_topp_kernel[(programs,)](
@@ -104,6 +131,7 @@ def install_topp_row_parallel():
                 raise RuntimeError('Top-p row concurrency changed masked logits')
             if not torch.equal(rng_before, torch.cuda.get_rng_state(logits.device)):
                 raise RuntimeError('Top-p masking changed RNG state')
+            shadow_budget.record_pass(batch)
             _stats['shadow_checks'] += 1
             values = p.detach().cpu().tolist()
             logger.info('LeanScale top-p shadow passed: B=%d V=%d stride=%s p_min=%s p_max=%s exact_mask=True rng_unchanged=True check=%d',
